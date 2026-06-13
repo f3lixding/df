@@ -1,6 +1,9 @@
 const std = @import("std");
 const Io = std.Io;
 
+const util = @import("util.zig");
+const c = util.c;
+
 const Opts = struct {
     const Self = @This();
 
