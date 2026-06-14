@@ -4,6 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const bin_name = b.option([]const u8, "bin-name", "bin name") orelse "df";
+    const rpaths = b.option([]const u8, "rpath", "rpath to add");
 
     const exe = b.addExecutable(.{
         .name = bin_name,
@@ -21,9 +22,28 @@ pub fn build(b: *std.Build) void {
     exe.pie = true;
 
     linkNc(exe);
-    addNixRPath(b, exe);
+    addNixRPath(exe, rpaths);
 
     b.installArtifact(exe);
+
+    const unit_tests = b.addTest(.{
+        .root_module = b.addModule("test_module", .{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    unit_tests.use_lld = false;
+    unit_tests.pie = true;
+
+    linkNc(unit_tests);
+    addNixRPath(unit_tests, rpaths);
+
+    const run_unit_tests = b.addRunArtifact(unit_tests);
+
+    const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&run_unit_tests.step);
 }
 
 fn linkNc(bin: *std.Build.Step.Compile) void {
@@ -36,8 +56,8 @@ fn linkNc(bin: *std.Build.Step.Compile) void {
     });
 }
 
-fn addNixRPath(b: *std.Build, bin: *std.Build.Step.Compile) void {
-    const rpaths = b.option([]const u8, "rpath", "rpath to add") orelse return;
+fn addNixRPath(bin: *std.Build.Step.Compile, maybe_rpaths: ?[]const u8) void {
+    const rpaths = maybe_rpaths orelse return;
 
     var path_iter = std.mem.splitScalar(u8, rpaths, ':');
 

@@ -50,3 +50,7 @@ pub fn main(init: std.process.Init) !void {
     const opts = try Opts.parseFromArgs(args, errMsgWriter);
     std.debug.print("{any}\n", .{opts});
 }
+
+test {
+    _ = @import("util.zig");
+}
