@@ -7,6 +7,7 @@ pub fn build(b: *std.Build) void {
     const rpaths = b.option([]const u8, "rpath", "rpath to add");
     const interpreter = b.option([]const u8, "interpreter", "ELF interpreter to set with patchelf");
     const patchelf = b.option([]const u8, "patchelf", "patchelf executable") orelse "patchelf";
+    const test_filter = b.option([]const u8, "filter", "test filter, delimited with |");
 
     const exe = b.addExecutable(.{
         .name = bin_name,
@@ -35,6 +36,14 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .link_libc = true,
         }),
+        .filters = if (test_filter) |filter| filter: {
+            var iter = std.mem.splitScalar(u8, filter, '|');
+            var res: std.ArrayList([]const u8) = .empty;
+            while (iter.next()) |item| {
+                res.append(b.allocator, item) catch return;
+            }
+            break :filter res.toOwnedSlice(b.allocator) catch return;
+        } else &.{},
     });
     unit_tests.use_lld = false;
     unit_tests.pie = true;

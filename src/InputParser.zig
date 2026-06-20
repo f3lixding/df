@@ -92,7 +92,10 @@ pub fn coreLoop(self: *Self, io: std.Io) anyerror!void {
 
         const key = self.input_source.get_input_nblock(self.nc_ctx, &input);
         if (key != 0) {
+            const now_ms: i64 = std.Io.Clock.real.now(io).toMilliseconds();
+
             const input_event: InputEvent = .{
+                .timestamp = now_ms,
                 .key = key,
                 .ncinput = input,
             };

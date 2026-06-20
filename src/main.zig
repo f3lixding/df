@@ -95,4 +95,5 @@ pub fn main(init: std.process.Init) !void {
 test {
     _ = @import("util.zig");
     _ = @import("InputParser.zig");
+    _ = @import("App.zig");
 }
