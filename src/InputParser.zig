@@ -3,10 +3,7 @@ const std = @import("std");
 const util = @import("util.zig");
 const c = util.c;
 
-pub const InputEvent = struct {
-    key: u32,
-    ncinput: c.ncinput,
-};
+const InputEvent = @import("protocol.zig").InputEvent;
 
 /// This is mainly for testability
 /// We don't want to actually init notcurses in tests as it would take over

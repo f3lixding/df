@@ -26,16 +26,6 @@ pub fn build(b: *std.Build) void {
     linkNc(exe);
     addNixRPath(exe, rpaths);
 
-    if (interpreter) |interp| {
-        const patch_exe = b.addSystemCommand(&.{
-            patchelf,
-            "--set-interpreter",
-            interp,
-        });
-        patch_exe.addFileArg(exe.getEmittedBin());
-        exe.step.dependOn(&patch_exe.step);
-    }
-
     b.installArtifact(exe);
 
     const unit_tests = b.addTest(.{

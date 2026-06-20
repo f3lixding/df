@@ -4,6 +4,8 @@ const Io = std.Io;
 const util = @import("util.zig");
 const c = util.c;
 const logging = @import("logging.zig");
+const InputParser = @import("InputParser.zig");
+const protocol = @import("protocol.zig");
 
 pub const std_options: std.Options = .{
     .log_level = .debug,
@@ -42,6 +44,31 @@ const Opts = struct {
 
         return res;
     }
+
+    pub fn execute(self: Self, alloc: std.mem.Allocator, io: std.Io) !void {
+        _ = self;
+
+        const Spsc = util.Spsc;
+        const InputEvent = protocol.InputEvent;
+
+        if (c.setlocale(c.LC_ALL, "") == null) {
+            return error.SetLocaleFailed;
+        }
+
+        var opts = std.mem.zeroes(c.notcurses_options);
+        const nc_ctx = c.notcurses_core_init(&opts, null) orelse {
+            return error.NotcursesInitFailed;
+        };
+        defer _ = c.notcurses_stop(nc_ctx);
+
+        const channel = try Spsc(InputEvent).init(alloc, 25);
+        defer channel.deinit();
+
+        var input_parser = try InputParser.init(alloc, nc_ctx, channel.tx, .{});
+        defer input_parser.deinit(io);
+
+        try input_parser.listen(io);
+    }
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -59,6 +86,10 @@ pub fn main(init: std.process.Init) !void {
 
     const opts = try Opts.parseFromArgs(args, errMsgWriter);
     std.debug.print("{any}\n", .{opts});
+
+    opts.execute(std.heap.page_allocator, init.io) catch |err| {
+        std.log.err("Execute failed: {any}", .{err});
+    };
 }
 
 test {
