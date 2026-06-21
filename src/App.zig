@@ -45,7 +45,6 @@ pub fn deinit(self: *Self, io: std.Io) void {
 }
 
 fn coreLoop(self: *Self, io: std.Io, nc_ctx: *c.notcurses) anyerror!void {
-    _ = nc_ctx;
     var last_tick = std.Io.Timestamp.now(io, .awake);
 
     while (true) {
@@ -62,9 +61,6 @@ fn coreLoop(self: *Self, io: std.Io, nc_ctx: *c.notcurses) anyerror!void {
             .elapsed_ms = elapsed.toMilliseconds(),
         };
 
-        // Notes to self. To be deleted later:
-        // Here we should go through the stack and pick out the first with a conclusion
-        // This means we should probably need to come up with a protocol agreed upon by all components
         if (recv_res) |evt| {
             try self.handleInputEvent(evt);
         } else |err| switch (err) {
@@ -74,7 +70,7 @@ fn coreLoop(self: *Self, io: std.Io, nc_ctx: *c.notcurses) anyerror!void {
             else => return err,
         }
 
-        // try self.render();
+        try self.render(nc_ctx);
     }
 }
 
@@ -123,8 +119,9 @@ fn tick(self: *Self, frame_time: FrameTime) !void {
 }
 
 fn render(self: *const Self, nc_ctx: *c.notcurses) !void {
-    _ = self;
-    _ = nc_ctx;
+    for (self.components.items) |*comp| {
+        try comp.render(nc_ctx);
+    }
 }
 
 fn loopTime(self: Self) i64 {
