@@ -69,11 +69,11 @@ pub fn listen(self: *Self, io: std.Io) !void {
 
 pub fn deinit(self: *Self, io: std.Io) void {
     const log = std.log.scoped(.input_parser);
-    _ = log;
 
     if (self.future) |*fut| {
-        fut.cancel(io) catch {
-            // TODO: log it here
+        fut.cancel(io) catch |err| {
+            if (err != error.Canceled)
+                log.err("Error canceling future {any}", .{err});
         };
     }
 }

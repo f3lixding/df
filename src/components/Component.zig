@@ -13,36 +13,41 @@ ptr: *anyopaque,
 vtable: *const VTable,
 
 pub const VTable = struct {
-    update_interval: *const fn (*anyopaque) ?i64,
-    update: *const fn (*anyopaque, FrameTime) anyerror!Conclusion,
+    update_interval: ?*const fn (*anyopaque) i64 = null,
+    update: ?*const fn (*anyopaque, FrameTime) anyerror!Conclusion = null,
     render: *const fn (*anyopaque, *c.notcurses) anyerror!void,
-    key_handler: *const fn (*anyopaque, InputEvent) anyerror!Conclusion,
-    clean_up: *const fn (*anyopaque) anyerror!void,
-    is_dirty: *const fn (*anyopaque) bool,
+    key_handler: ?*const fn (*anyopaque, InputEvent) anyerror!Conclusion = null,
+    clean_up: ?*const fn (*anyopaque) anyerror!void = null,
+    is_dirty: ?*const fn (*anyopaque) bool = null,
 };
 
 /// Called to update internal state that depends on app-loop time, such as
 /// animations or scheduled refreshes, as opposed to external input events.
 pub fn update(self: Component, frame_time: FrameTime) anyerror!Conclusion {
-    return try self.vtable.update(self.ptr, frame_time);
+    const updateFn = self.vtable.update orelse return .Noop;
+    return try updateFn(self.ptr, frame_time);
 }
 
 /// Called by the orchestrator to retrieve the component's preference to have
 /// internal states updated
 pub fn updateInterval(self: Component) ?i64 {
-    return self.vtable.update_interval(self.ptr);
+    const updateIntervalFn = self.vtable.update_interval orelse return null;
+    return updateIntervalFn(self.ptr);
 }
 
 pub fn render(self: Component, nc_ctx: *c.notcurses) anyerror!void {
-    if (self.vtable.is_dirty(self.ptr)) {
+    const isDirtyFn = self.vtable.is_dirty orelse return;
+    if (isDirtyFn(self.ptr)) {
         try self.vtable.render(self.ptr, nc_ctx);
     }
 }
 
 pub fn handleInputEvent(self: Component, evt: InputEvent) anyerror!Conclusion {
-    return try self.vtable.key_handler(self.ptr, evt);
+    const keyHandlerFn = self.vtable.key_handler orelse return .Noop;
+    return try keyHandlerFn(self.ptr, evt);
 }
 
 pub fn cleanUp(self: Component) anyerror!void {
-    try self.vtable.clean_up(self.ptr);
+    const cleanUpFn = self.vtable.clean_up orelse return;
+    try cleanUpFn(self.ptr);
 }

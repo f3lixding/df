@@ -19,6 +19,8 @@ components: std.ArrayList(Component) = .empty,
 rx: Receiver,
 future: ?std.Io.Future(anyerror!void) = null,
 
+pub const Opts = struct {};
+
 pub fn init(alloc: std.mem.Allocator, rx: Receiver) Self {
     return .{
         .alloc = alloc,
@@ -27,7 +29,11 @@ pub fn init(alloc: std.mem.Allocator, rx: Receiver) Self {
 }
 
 pub fn start(self: *Self, io: std.Io, nc_ctx: *c.notcurses) !void {
-    // TODO: add a base component into components
+    const Splash = @import("components/Splash.zig");
+    const splash = try self.alloc.create(Splash);
+    splash.* = .{};
+
+    try self.components.append(self.alloc, splash.initInterface());
     self.future = try std.Io.concurrent(io, coreLoop, .{ self, io, nc_ctx });
 }
 
@@ -148,11 +154,6 @@ test "handleInputEvent mounts and dismounts components" {
         handled_count: usize = 0,
         cleanup_count: usize = 0,
 
-        fn updateInterval(ptr: *anyopaque) ?i64 {
-            _ = ptr;
-            return null;
-        }
-
         fn update(ptr: *anyopaque, frame_time: FrameTime) anyerror!Conclusion {
             _ = ptr;
             _ = frame_time;
@@ -182,7 +183,6 @@ test "handleInputEvent mounts and dismounts components" {
         }
 
         const vtable: Component.VTable = .{
-            .update_interval = updateInterval,
             .update = update,
             .render = renderFn,
             .key_handler = keyHandler,
