@@ -1,3 +1,5 @@
+//! This is the base component for the app and will always be spawned first at
+//! the bottom and only at the bottom of the stack.
 const std = @import("std");
 
 const util = @import("../util.zig");
@@ -21,6 +23,13 @@ pub fn initInterface(self: *Self) Component {
             }._render,
         },
     };
+}
+
+pub fn init(nc_ctx: *c.notcurses) !Self {
+    // Note (to be deleted later, this is just a reminder):
+    // - Things that we need to start receiving input events and process them
+    const stdplane = c.notcurses_stdplane(nc_ctx) orelse return error.CannotObtainStdplane;
+    _ = stdplane;
 }
 
 pub fn render(self: *const Self, nc_ctx: *c.notcurses) !void {
