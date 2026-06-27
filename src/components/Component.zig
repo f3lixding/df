@@ -6,6 +6,7 @@ const protocol = @import("../protocol.zig");
 const InputEvent = protocol.InputEvent;
 const FrameTime = protocol.FrameTime;
 const Conclusion = protocol.Conclusion;
+const RenderCtx = protocol.RenderCtx;
 
 const Component = @This();
 
@@ -15,7 +16,7 @@ vtable: *const VTable,
 pub const VTable = struct {
     update_interval: ?*const fn (*anyopaque) i64 = null,
     update: ?*const fn (*anyopaque, FrameTime) anyerror!Conclusion = null,
-    render: *const fn (*anyopaque, *c.notcurses) anyerror!void,
+    render: *const fn (*anyopaque, *const RenderCtx, *c.notcurses) anyerror!void,
     key_handler: ?*const fn (*anyopaque, InputEvent) anyerror!Conclusion = null,
     clean_up: ?*const fn (*anyopaque) anyerror!void = null,
     is_dirty: *const fn (*anyopaque) bool = &struct {
@@ -40,10 +41,12 @@ pub fn updateInterval(self: Component) ?i64 {
     return updateIntervalFn(self.ptr);
 }
 
-pub fn render(self: Component, nc_ctx: *c.notcurses) anyerror!void {
+pub fn render(self: Component, render_ctx: *const RenderCtx, nc_ctx: *c.notcurses) anyerror!bool {
     if (self.vtable.is_dirty(self.ptr)) {
-        try self.vtable.render(self.ptr, nc_ctx);
+        try self.vtable.render(self.ptr, render_ctx, nc_ctx);
+        return true;
     }
+    return false;
 }
 
 pub fn handleInputEvent(self: Component, evt: InputEvent) anyerror!Conclusion {

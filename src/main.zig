@@ -77,6 +77,11 @@ const Opts = struct {
         try input_parser.listen(io);
 
         var app = App.init(alloc, channel.rx);
+        const Splash = @import("components/Splash.zig");
+        const splash = try alloc.create(Splash);
+        splash.* = .init();
+        try app.components.append(alloc, splash.initInterface());
+
         defer app.deinit(io);
 
         try app.startAndAwait(io, nc_ctx);

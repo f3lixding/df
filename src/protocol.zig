@@ -28,4 +28,12 @@ pub const Conclusion = union(enum) {
     /// Signaling to the orchestrator that nothing needs to be done for this
     /// component
     Noop,
+
+    /// Quit the app
+    Quit,
+};
+
+pub const RenderCtx = struct {
+    rows: c_uint = 0,
+    cols: c_uint = 0,
 };

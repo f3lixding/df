@@ -10,6 +10,7 @@ const FrameTime = protocol.FrameTime;
 const Conclusion = protocol.Conclusion;
 const Component = @import("Component.zig");
 const Bucket = util.LeakyBucket(InputEvent);
+const RenderCtx = protocol.RenderCtx;
 
 const Self = @This();
 
@@ -21,11 +22,12 @@ pub fn initInterface(self: *Self) Component {
         .ptr = self,
         .vtable = &.{
             .render = struct {
-                pub fn _render(ptr: *anyopaque, nc_ctx: *c.notcurses) !void {
+                pub fn _render(ptr: *anyopaque, render_ctx: *const RenderCtx, nc_ctx: *c.notcurses) !void {
                     const self_typed: *Self = @ptrCast(@alignCast(ptr));
-                    try @call(.always_inline, render, .{ self_typed, nc_ctx });
+                    try @call(.always_inline, render, .{ self_typed, render_ctx, nc_ctx });
                 }
             }._render,
+
             .is_dirty = struct {
                 pub fn isDirty(ptr: *anyopaque) bool {
                     const self_typed: *Self = @ptrCast(@alignCast(ptr));
@@ -36,6 +38,13 @@ pub fn initInterface(self: *Self) Component {
                     return false;
                 }
             }.isDirty,
+
+            .key_handler = struct {
+                pub fn handleInput(ptr: *anyopaque, event: InputEvent) !Conclusion {
+                    const self_typed: *Self = @ptrCast(@alignCast(ptr));
+                    return try @call(.always_inline, handleInputEvent, .{ self_typed, event });
+                }
+            }.handleInput,
         },
     };
 }
@@ -48,18 +57,33 @@ pub fn init() Self {
     };
 }
 
-pub fn render(self: *const Self, nc_ctx: *c.notcurses) !void {
+pub fn handleInputEvent(self: *Self, input_event: InputEvent) !Conclusion {
+    const key = input_event.key;
+
+    switch (key) {
+        'q' => return .Quit,
+        c.NCKEY_RESIZE => {
+            self.initial_render_done = false;
+        },
+        else => {},
+    }
+
+    return .Noop;
+}
+
+pub fn render(self: *const Self, render_ctx: *const RenderCtx, nc_ctx: *c.notcurses) !void {
     _ = self;
 
-    var rows: c_uint = 0;
-    var cols: c_uint = 0;
-    const stdplane = c.notcurses_stddim_yx(nc_ctx, &rows, &cols) orelse return error.NoStdPlane;
+    const rows = render_ctx.rows;
+    const cols = render_ctx.cols;
+
+    const stdplane = c.notcurses_stdplane(nc_ctx) orelse return error.NoStdplane;
 
     c.ncplane_erase(stdplane);
 
     const logo = [_][:0]const u8{
         "     ____  ______ ",
-        "    / __ \\/ ____/ ",
+        "    / __ \\/ ____/",
         "   / / / / /_     ",
         "  / /_/ / __/     ",
         " /_____/_/        ",

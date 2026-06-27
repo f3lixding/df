@@ -10,6 +10,7 @@ const FrameTime = protocol.FrameTime;
 const Receiver = util.Spsc(InputEvent).Receiver;
 const Conclusion = protocol.Conclusion;
 const Component = @import("components/Component.zig");
+const RenderCtx = protocol.RenderCtx;
 
 const Self = @This();
 
@@ -18,6 +19,7 @@ alloc: std.mem.Allocator,
 components: std.ArrayList(Component) = .empty,
 rx: Receiver,
 future: ?std.Io.Future(anyerror!void) = null,
+render_ctx: RenderCtx = .{},
 
 pub const Opts = struct {};
 
@@ -29,11 +31,21 @@ pub fn init(alloc: std.mem.Allocator, rx: Receiver) Self {
 }
 
 pub fn start(self: *Self, io: std.Io, nc_ctx: *c.notcurses) !void {
-    const Splash = @import("components/Splash.zig");
-    const splash = try self.alloc.create(Splash);
-    splash.* = .init();
+    // This is here so the tests can be ran without the involvement of notcurses
+    // I need to find a better way to do this in the future
+    if (self.components.items.len > 0) {
+        var rows: c_uint = 0;
+        var cols: c_uint = 0;
 
-    try self.components.append(self.alloc, splash.initInterface());
+        if (c.notcurses_refresh(nc_ctx, &rows, &cols) < 0) {
+            return error.RefreshFailed;
+        }
+
+        self.render_ctx = .{
+            .rows = rows,
+            .cols = cols,
+        };
+    }
     self.future = try std.Io.concurrent(io, coreLoop, .{ self, io, nc_ctx });
 }
 
@@ -76,7 +88,10 @@ fn coreLoop(self: *Self, io: std.Io, nc_ctx: *c.notcurses) anyerror!void {
         };
 
         if (recv_res) |evt| {
-            try self.handleInputEvent(evt);
+            self.handleInputEvent(nc_ctx, evt) catch |err| switch (err) {
+                error.Terminate => break,
+                else => {},
+            };
         } else |err| switch (err) {
             error.Timeout => {
                 try self.tick(frame_time);
@@ -88,7 +103,12 @@ fn coreLoop(self: *Self, io: std.Io, nc_ctx: *c.notcurses) anyerror!void {
     }
 }
 
-fn handleInputEvent(self: *Self, evt: InputEvent) !void {
+fn handleInputEvent(self: *Self, nc_ctx: *c.notcurses, evt: InputEvent) !void {
+    if (evt.key == c.NCKEY_RESIZE) {
+        if (c.notcurses_refresh(nc_ctx, &self.render_ctx.rows, &self.render_ctx.cols) < 0) {
+            return error.RefreshFailed;
+        }
+    }
     var i = self.components.items.len;
 
     while (i > 0) {
@@ -105,6 +125,7 @@ fn handleInputEvent(self: *Self, evt: InputEvent) !void {
                 // components do not handle the same input event that mounted them.
                 try self.components.append(self.alloc, to_mount);
             },
+            .Quit => return error.Terminate,
             .Noop => continue,
         }
     }
@@ -127,18 +148,22 @@ fn tick(self: *Self, frame_time: FrameTime) !void {
                 // components do not handle the same input event that mounted them.
                 try self.components.append(self.alloc, to_mount);
             },
+            .Quit => return error.Terminate,
             .Noop => continue,
         }
     }
 }
 
 fn render(self: *const Self, nc_ctx: *c.notcurses) !void {
+    var needs_to_call_render = false;
     for (self.components.items) |*comp| {
-        try comp.render(nc_ctx);
+        needs_to_call_render = (try comp.render(&self.render_ctx, nc_ctx)) or needs_to_call_render;
     }
 
-    if (c.notcurses_render(nc_ctx) < 0) {
-        return error.RenderFailed;
+    if (needs_to_call_render) {
+        if (c.notcurses_render(nc_ctx) < 0) {
+            return error.RenderFailed;
+        }
     }
 }
 
@@ -165,8 +190,9 @@ test "handleInputEvent mounts and dismounts components" {
             return .Noop;
         }
 
-        fn renderFn(ptr: *anyopaque, nc_ctx: *c.notcurses) anyerror!void {
+        fn renderFn(ptr: *anyopaque, render_ctx: *const RenderCtx, nc_ctx: *c.notcurses) anyerror!void {
             _ = ptr;
+            _ = render_ctx;
             _ = nc_ctx;
         }
 
@@ -227,7 +253,7 @@ test "handleInputEvent mounts and dismounts components" {
         .ncinput = std.mem.zeroes(c.ncinput),
     };
 
-    try app.handleInputEvent(input_event);
+    try app.handleInputEvent(@ptrFromInt(1), input_event);
 
     try std.testing.expectEqual(@as(usize, 1), keep_state.handled_count);
     try std.testing.expectEqual(@as(usize, 1), dismount_state.handled_count);
