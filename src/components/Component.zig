@@ -18,7 +18,12 @@ pub const VTable = struct {
     render: *const fn (*anyopaque, *c.notcurses) anyerror!void,
     key_handler: ?*const fn (*anyopaque, InputEvent) anyerror!Conclusion = null,
     clean_up: ?*const fn (*anyopaque) anyerror!void = null,
-    is_dirty: ?*const fn (*anyopaque) bool = null,
+    is_dirty: *const fn (*anyopaque) bool = &struct {
+        pub fn isDirty(ptr: *anyopaque) bool {
+            _ = ptr;
+            return true;
+        }
+    }.isDirty,
 };
 
 /// Called to update internal state that depends on app-loop time, such as
@@ -36,8 +41,7 @@ pub fn updateInterval(self: Component) ?i64 {
 }
 
 pub fn render(self: Component, nc_ctx: *c.notcurses) anyerror!void {
-    const isDirtyFn = self.vtable.is_dirty orelse return;
-    if (isDirtyFn(self.ptr)) {
+    if (self.vtable.is_dirty(self.ptr)) {
         try self.vtable.render(self.ptr, nc_ctx);
     }
 }

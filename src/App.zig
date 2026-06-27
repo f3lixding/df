@@ -31,7 +31,7 @@ pub fn init(alloc: std.mem.Allocator, rx: Receiver) Self {
 pub fn start(self: *Self, io: std.Io, nc_ctx: *c.notcurses) !void {
     const Splash = @import("components/Splash.zig");
     const splash = try self.alloc.create(Splash);
-    splash.* = .{};
+    splash.* = .init();
 
     try self.components.append(self.alloc, splash.initInterface());
     self.future = try std.Io.concurrent(io, coreLoop, .{ self, io, nc_ctx });
@@ -59,6 +59,7 @@ pub fn deinit(self: *Self, io: std.Io) void {
 
 fn coreLoop(self: *Self, io: std.Io, nc_ctx: *c.notcurses) anyerror!void {
     var last_tick = std.Io.Timestamp.now(io, .awake);
+    try self.render(nc_ctx);
 
     while (true) {
         try io.checkCancel();
@@ -134,6 +135,10 @@ fn tick(self: *Self, frame_time: FrameTime) !void {
 fn render(self: *const Self, nc_ctx: *c.notcurses) !void {
     for (self.components.items) |*comp| {
         try comp.render(nc_ctx);
+    }
+
+    if (c.notcurses_render(nc_ctx) < 0) {
+        return error.RenderFailed;
     }
 }
 
