@@ -21,6 +21,13 @@ const Self = @This();
 input_bucket: Bucket,
 initial_render_done: bool = false,
 gif: ?Gif = null,
+logo: [5][:0]const u8 = .{
+    "     ____  ______ ",
+    "    / __ \\/ ____/",
+    "   / / / / /_     ",
+    "  / /_/ / __/     ",
+    " /_____/_/        ",
+},
 
 pub fn initInterface(self: *Self) Component {
     return .{
@@ -79,7 +86,14 @@ const Gif = struct {
     elapsed_ms: i64 = 0,
     dirty: bool = true,
 
-    pub fn init(parent_plane: *c.ncplane) !Gif {
+    pub const Opts = struct {
+        y: c_int = 0,
+        x: c_int = 0,
+        height: c_uint,
+        width: ?c_uint = null,
+    };
+
+    pub fn init(nc_ctx: *c.notcurses, parent_plane: *c.ncplane, opts: Opts) !Gif {
         // TODO: move more of this into util
         var path_buf: [256]u8 = undefined;
         var full_path_buf: [256]u8 = undefined;
@@ -105,26 +119,47 @@ const Gif = struct {
 
         const visual = c.ncvisual_from_file(full_asset_path.ptr) orelse return error.GifLoadFailed;
         var popts = std.mem.zeroes(c.ncplane_options);
-        popts.y = 2;
-        popts.x = 4;
-        popts.rows = 20;
-        popts.cols = 40;
+        popts.y = opts.y;
+        popts.x = opts.x;
+        popts.rows = opts.height;
+        popts.cols = if (opts.width) |width| width else blk: {
+            var geom = std.mem.zeroes(c.ncvgeom);
+
+            if (c.ncvisual_geom(null, visual, null, &geom) < 0) {
+                return error.VisualGeomFailed;
+            }
+
+            const gif_height = geom.pixy;
+            const gif_width = geom.pixx;
+
+            break :blk (opts.height * gif_width + gif_height - 1) / gif_height;
+        };
         popts.name = "gif";
 
         const plane = c.ncplane_create(parent_plane, &popts) orelse return error.CreatePlaneFailed;
 
         var vopts = std.mem.zeroes(c.ncvisual_options);
         vopts.n = plane;
-        vopts.scaling = c.NCSCALE_SCALE;
-        vopts.blitter = c.NCBLIT_DEFAULT;
         vopts.y = 0;
         vopts.x = 0;
+
+        if (shouldTryPixelBlit(nc_ctx)) {
+            configurePixelBlit(&vopts);
+        } else {
+            configureFallbackBlit(&vopts);
+        }
 
         return .{
             .visual = visual,
             .plane = plane,
             .vopts = vopts,
         };
+    }
+
+    pub fn move(self: *Gif, y: c_int, x: c_int) !void {
+        if (c.ncplane_move_yx(self.plane, y, x) < 0) {
+            return error.MovePlaneFailed;
+        }
     }
 
     pub fn update(self: *Gif, frame_time: FrameTime) !Conclusion {
@@ -148,10 +183,40 @@ const Gif = struct {
         c.ncplane_erase(self.plane);
 
         if (c.ncvisual_blit(nc_ctx, self.visual, &self.vopts) == null) {
-            return error.BlitGifFailed;
+            // Pixel support detection can be wrong in practice. If the strict
+            // pixel blit fails, fall back to a Unicode-cell blitter and retry.
+            if (self.vopts.blitter == c.NCBLIT_PIXEL) {
+                configureFallbackBlit(&self.vopts);
+                c.ncplane_erase(self.plane);
+                if (c.ncvisual_blit(nc_ctx, self.visual, &self.vopts) == null) {
+                    return error.BlitGifFailed;
+                }
+            } else {
+                return error.BlitGifFailed;
+            }
         }
 
         self.dirty = false;
+    }
+
+    fn shouldTryPixelBlit(nc_ctx: *c.notcurses) bool {
+        if (std.c.getenv("TMUX") != null) return false;
+        if (!c.notcurses_canopen_images(nc_ctx)) return false;
+        return c.notcurses_canpixel(nc_ctx);
+    }
+
+    fn configurePixelBlit(vopts: *c.ncvisual_options) void {
+        vopts.scaling = c.NCSCALE_SCALE_HIRES;
+        vopts.blitter = c.NCBLIT_PIXEL;
+        // Fail instead of silently degrading, so render() can choose our
+        // explicit fallback path.
+        vopts.flags |= c.NCVISUAL_OPTION_NODEGRADE;
+    }
+
+    fn configureFallbackBlit(vopts: *c.ncvisual_options) void {
+        vopts.scaling = c.NCSCALE_SCALE;
+        vopts.blitter = c.NCBLIT_4x2;
+        vopts.flags &= ~@as(u64, c.NCVISUAL_OPTION_NODEGRADE);
     }
 
     pub fn updateInterval(self: *Gif) ?i64 {
@@ -163,7 +228,7 @@ const Gif = struct {
 pub fn init(nc_ctx: *c.notcurses) !Self {
     const input_bucket = Bucket.init(.{});
     const stdplane = c.notcurses_stdplane(nc_ctx) orelse return error.NoStdplane;
-    const gif = try Gif.init(stdplane);
+    const gif = try Gif.init(nc_ctx, stdplane, .{ .height = 20 });
 
     return .{
         .input_bucket = input_bucket,
@@ -194,25 +259,18 @@ pub fn render(self: *Self, render_ctx: *const RenderCtx, nc_ctx: *c.notcurses) !
 
         c.ncplane_erase(stdplane);
 
-        const logo = [_][:0]const u8{
-            "     ____  ______ ",
-            "    / __ \\/ ____/",
-            "   / / / / /_     ",
-            "  / /_/ / __/     ",
-            " /_____/_/        ",
-        };
         const title: [:0]const u8 = "doodle finder";
         const hint: [:0]const u8 = "press j/f, resize the terminal, make something messy";
 
-        const logo_width: c_uint = logo[0].len;
-        const block_height: c_uint = logo.len + 4;
+        const logo_width: c_uint = @intCast(self.logo[0].len);
+        const block_height: c_uint = self.logo.len + 4;
         const origin_y = centered(rows, block_height);
         const origin_x = centered(cols, logo_width);
 
         if (c.ncplane_set_fg_rgb8(stdplane, 0x85, 0xd7, 0xff) < 0) return error.SetColorFailed;
         c.ncplane_set_styles(stdplane, c.NCSTYLE_BOLD);
 
-        for (logo, 0..) |line, i| {
+        for (self.logo, 0..) |line, i| {
             const y: c_int = origin_y + @as(c_int, @intCast(i));
             if (c.ncplane_putstr_yx(stdplane, y, origin_x, line.ptr) < 0) {
                 return error.PutStrFailed;
@@ -221,12 +279,17 @@ pub fn render(self: *Self, render_ctx: *const RenderCtx, nc_ctx: *c.notcurses) !
 
         c.ncplane_set_styles(stdplane, c.NCSTYLE_NONE);
         if (c.ncplane_set_fg_rgb8(stdplane, 0xff, 0xd8, 0x66) < 0) return error.SetColorFailed;
-        try putCentered(stdplane, origin_y + @as(c_int, @intCast(logo.len)) + 1, cols, title);
+        try putCentered(stdplane, origin_y + @as(c_int, @intCast(self.logo.len)) + 1, cols, title);
 
         if (c.ncplane_set_fg_rgb8(stdplane, 0x88, 0x88, 0x88) < 0) return error.SetColorFailed;
-        try putCentered(stdplane, origin_y + @as(c_int, @intCast(logo.len)) + 3, cols, hint);
+        try putCentered(stdplane, origin_y + @as(c_int, @intCast(self.logo.len)) + 3, cols, hint);
 
         self.initial_render_done = true;
+
+        const gif_x = origin_x + @as(c_int, @intCast(logo_width));
+        if (self.gif) |*gif| {
+            try gif.move(origin_y, gif_x);
+        }
     }
 
     if (self.gif) |*gif| try gif.render(nc_ctx);
