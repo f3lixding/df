@@ -6,12 +6,14 @@ const startsWith = std.mem.startsWith;
 pub const Diff = struct {
     files: []FileDiff,
 
+    /// The caller needs to ensure the input stays intact until deinit is
+    /// called. The construction of Diff as well as its children makes no
+    /// attempt to copy the underlying slices
     pub fn init(alloc: std.mem.Allocator, input: []const u8) !Diff {
         var lines = std.mem.splitScalar(u8, input, '\n');
         var files: std.ArrayList(FileDiff) = .empty;
 
         while (lines.next()) |line| {
-            std.debug.print("line: {s}\n", .{line});
             if (!startsWith(u8, line, "diff")) {
                 return error.MalformedDiff;
             }
@@ -153,7 +155,7 @@ fn parseMeta(inputs: [][]const u8) !struct { old_path: []const u8, new_path: []c
     };
 }
 
-/// DOES copy
+/// Does NOT copy
 fn parseHunk(alloc: std.mem.Allocator, inputs: [][]const u8) !Hunk {
     std.debug.assert(inputs.len > 0);
 
