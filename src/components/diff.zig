@@ -5,6 +5,8 @@ const startsWith = std.mem.startsWith;
 
 pub const Diff = struct {
     files: []FileDiff,
+    display_lines: []DisplayLine,
+    top_line: usize = 0,
 
     /// The caller needs to ensure the input stays intact until deinit is
     /// called. The construction of Diff as well as its children makes no
@@ -74,8 +76,14 @@ pub const Diff = struct {
             try files.append(alloc, file_diff);
         }
 
+        var display_lines: std.ArrayList(DisplayLine) = .empty;
+        for (files.items) |file_diff| {
+            try file_diff.gatherDisplayLines(alloc, &display_lines);
+        }
+
         return .{
             .files = try files.toOwnedSlice(alloc),
+            .display_lines = try display_lines.toOwnedSlice(alloc),
         };
     }
 
@@ -89,6 +97,7 @@ pub const Diff = struct {
             file.deinit(alloc);
         }
         alloc.free(self.files);
+        alloc.free(self.display_lines);
     }
 };
 
@@ -97,16 +106,21 @@ pub const FileDiff = struct {
     new_path: []const u8,
     hunks: []Hunk,
 
-    // TODO: refine param list
-    pub fn render(self: FileDiff) void {
-        _ = self;
-    }
-
     pub fn deinit(self: FileDiff, alloc: std.mem.Allocator) void {
         for (self.hunks) |hunk| {
             hunk.deinit(alloc);
         }
         alloc.free(self.hunks);
+    }
+
+    pub fn gatherDisplayLines(
+        self: FileDiff,
+        alloc: std.mem.Allocator,
+        buf: *std.ArrayList(DisplayLine),
+    ) !void {
+        for (self.hunks) |hunk| {
+            try hunk.gatherDisplayLines(alloc, buf);
+        }
     }
 };
 
@@ -118,13 +132,18 @@ pub const Hunk = struct {
     new_len: usize = 0,
     lines: []DiffLine,
 
-    // TODO: refine param list
-    pub fn render(self: Hunk) void {
-        _ = self;
-    }
-
     pub fn deinit(self: Hunk, alloc: std.mem.Allocator) void {
         alloc.free(self.lines);
+    }
+
+    pub fn gatherDisplayLines(
+        self: Hunk,
+        alloc: std.mem.Allocator,
+        buf: *std.ArrayList(DisplayLine),
+    ) !void {
+        for (self.lines) |line| {
+            try buf.append(alloc, line.intoDisplayLine());
+        }
     }
 };
 
@@ -133,8 +152,29 @@ pub const DiffLine = union(enum) {
     add: []const u8,
     remove: []const u8,
 
-    // TODO: refine param list
-    pub fn render(self: DiffLine) void {
+    pub fn intoDisplayLine(self: DiffLine) DisplayLine {
+        return switch (self) {
+            .context => |text| return .{ .kind = DisplayLine.Kind.context, .text = text },
+            .add => |text| return .{ .kind = DisplayLine.Kind.add, .text = text },
+            .remove => |text| return .{ .kind = DisplayLine.Kind.remove, .text = text },
+        };
+    }
+};
+
+/// An alternate representation of parsed content optmized for rendering
+const DisplayLine = struct {
+    const Kind = enum {
+        file_header,
+        hunk_header,
+        context,
+        add,
+        remove,
+    };
+
+    kind: Kind,
+    text: []const u8,
+
+    pub fn render(self: DisplayLine) void {
         _ = self;
     }
 };
