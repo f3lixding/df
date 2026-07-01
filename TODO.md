@@ -1,6 +1,8 @@
 # TODO
 - [ ] Diff viewer
 - [ ] Syntax highlighting
+- [ ] Optimize SPSC (caching tail / head + false sharing prevention)
+- [ ] Refine grapheme width estimation with real notcurses api
 - [ ] Streaming api for diff invocation
 - [ ] Proper starting args
 - [ ] Refine arg sets 

@@ -11,7 +11,11 @@ pub const Diff = struct {
     /// The caller needs to ensure the input stays intact until deinit is
     /// called. The construction of Diff as well as its children makes no
     /// attempt to copy the underlying slices
-    pub fn init(alloc: std.mem.Allocator, input: []const u8) !Diff {
+    pub fn init(
+        alloc: std.mem.Allocator,
+        input: []const u8,
+        width: c_uint,
+    ) !Diff {
         var lines = std.mem.splitScalar(u8, input, '\n');
         var files: std.ArrayList(FileDiff) = .empty;
 
@@ -78,7 +82,7 @@ pub const Diff = struct {
 
         var display_lines: std.ArrayList(DisplayLine) = .empty;
         for (files.items) |file_diff| {
-            try file_diff.gatherDisplayLines(alloc, &display_lines);
+            try file_diff.gatherDisplayLines(alloc, &display_lines, width);
         }
 
         return .{
@@ -117,9 +121,10 @@ pub const FileDiff = struct {
         self: FileDiff,
         alloc: std.mem.Allocator,
         buf: *std.ArrayList(DisplayLine),
+        width: c_uint,
     ) !void {
         for (self.hunks) |hunk| {
-            try hunk.gatherDisplayLines(alloc, buf);
+            try hunk.gatherDisplayLines(alloc, buf, width);
         }
     }
 };
@@ -140,9 +145,10 @@ pub const Hunk = struct {
         self: Hunk,
         alloc: std.mem.Allocator,
         buf: *std.ArrayList(DisplayLine),
+        width: c_uint,
     ) !void {
         for (self.lines) |line| {
-            try buf.append(alloc, line.intoDisplayLine());
+            try line.gatherDisplayLines(alloc, buf, width);
         }
     }
 };
@@ -152,11 +158,38 @@ pub const DiffLine = union(enum) {
     add: []const u8,
     remove: []const u8,
 
-    pub fn intoDisplayLine(self: DiffLine) DisplayLine {
+    pub fn gatherDisplayLines(
+        self: DiffLine,
+        alloc: std.mem.Allocator,
+        buf: *std.ArrayList(DisplayLine),
+        width: c_uint,
+    ) !void {
+        const line = self.intoDisplayLine();
+        var remaining = line.text;
+
+        while (wrapLine(remaining, width)) |end| {
+            if (end == 0) break;
+
+            try buf.append(alloc, .{
+                .kind = line.kind,
+                .text = remaining[0..end],
+            });
+            remaining = remaining[end..];
+        }
+
+        if (remaining.len > 0) {
+            try buf.append(alloc, .{
+                .kind = line.kind,
+                .text = remaining,
+            });
+        }
+    }
+
+    fn intoDisplayLine(self: DiffLine) DisplayLine {
         return switch (self) {
-            .context => |text| return .{ .kind = DisplayLine.Kind.context, .text = text },
-            .add => |text| return .{ .kind = DisplayLine.Kind.add, .text = text },
-            .remove => |text| return .{ .kind = DisplayLine.Kind.remove, .text = text },
+            .context => |text| .{ .kind = DisplayLine.Kind.context, .text = text },
+            .add => |text| .{ .kind = DisplayLine.Kind.add, .text = text },
+            .remove => |text| .{ .kind = DisplayLine.Kind.remove, .text = text },
         };
     }
 };
@@ -223,6 +256,79 @@ fn parseHunk(alloc: std.mem.Allocator, inputs: [][]const u8) !Hunk {
     };
 }
 
+// TODO: util candidate
+/// Given a slice and a width for display area, produce an optional index of
+/// the new end for the current line. If null is returned, the current line is
+/// not long enough to create a wrap.
+fn wrapLine(input: []const u8, width: c_uint) ?usize {
+    if (input.len == 0) return null;
+
+    const max_width: usize = width;
+    if (max_width == 0) return 0;
+
+    var cols: usize = 0;
+    var i: usize = 0;
+
+    while (i < input.len) {
+        const start = i;
+        const cp_len = utf8CodepointLen(input[start..]);
+        const cp_width = codepointDisplayWidth(input[start .. start + cp_len]);
+
+        if (cols + cp_width > max_width) {
+            // If the first codepoint itself is wider than the viewport, return
+            // its end so callers can still make progress rather than looping
+            // forever on the same input.
+            return if (start == 0) cp_len else start;
+        }
+
+        cols += cp_width;
+        i += cp_len;
+    }
+
+    return null;
+}
+
+fn utf8CodepointLen(input: []const u8) usize {
+    std.debug.assert(input.len > 0);
+
+    const len = std.unicode.utf8ByteSequenceLength(input[0]) catch return 1;
+    if (len > input.len) return 1;
+    return len;
+}
+
+fn codepointDisplayWidth(input: []const u8) usize {
+    std.debug.assert(input.len > 0);
+
+    if (input.len == 1) {
+        return switch (input[0]) {
+            '\t' => 4,
+            0x00...0x1f, 0x7f => 0,
+            else => 1,
+        };
+    }
+
+    const cp = std.unicode.utf8Decode(input) catch return 1;
+    if (isCombiningCodepoint(cp)) return 0;
+
+    // This intentionally avoids depending on notcurses/libc. It is UTF-8 safe,
+    // but not a complete wcwidth implementation; CJK/fullwidth characters are
+    // currently treated as width 1. If that matters, replace this helper with a
+    // real wcwidth/ncstrwidth-backed implementation.
+    return 1;
+}
+
+fn isCombiningCodepoint(cp: u21) bool {
+    return switch (cp) {
+        0x0300...0x036f,
+        0x1ab0...0x1aff,
+        0x1dc0...0x1dff,
+        0x20d0...0x20ff,
+        0xfe20...0xfe2f,
+        => true,
+        else => false,
+    };
+}
+
 test "parseMeta extracts old and new paths from diff header" {
     var inputs = [_][]const u8{
         "diff --git a/src/components/DiffWindow.zig b/src/components/DiffWindow.zig",
@@ -254,6 +360,21 @@ test "parseHunk classifies context add and remove lines" {
     try std.testing.expectEqualStrings("-const old = @import(\"old.zig\");", hunk.lines[2].remove);
 }
 
+test "wrapLine returns null when line fits" {
+    try std.testing.expectEqual(null, wrapLine("abc", 3));
+    try std.testing.expectEqual(null, wrapLine("abc", 4));
+}
+
+test "wrapLine returns byte index where wrapping should occur" {
+    try std.testing.expectEqual(@as(?usize, 3), wrapLine("abcd", 3));
+    try std.testing.expectEqual(@as(?usize, 1), wrapLine("abcd", 1));
+}
+
+test "wrapLine does not split utf8 codepoints" {
+    // é is two bytes, but this implementation treats it as one display column.
+    try std.testing.expectEqual(@as(?usize, 3), wrapLine("éab", 2));
+}
+
 test "Diff.init parses a single file diff" {
     const input =
         \\diff --git a/src/components/DiffWindow.zig b/src/components/DiffWindow.zig
@@ -268,7 +389,7 @@ test "Diff.init parses a single file diff" {
     ;
 
     const alloc = std.testing.allocator;
-    const diff = try Diff.init(alloc, input);
+    const diff = try Diff.init(alloc, input, 80);
     defer diff.deinit(alloc);
 
     try std.testing.expectEqual(@as(usize, 1), diff.files.len);
