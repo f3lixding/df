@@ -19,7 +19,7 @@ alloc: std.mem.Allocator,
 components: std.ArrayList(Component) = .empty,
 rx: Receiver,
 future: ?std.Io.Future(anyerror!void) = null,
-render_ctx: RenderCtx = .{},
+render_ctx: RenderCtx = undefined,
 
 pub const Opts = struct {};
 
@@ -42,8 +42,9 @@ pub fn start(self: *Self, io: std.Io, nc_ctx: *c.notcurses) !void {
         }
 
         self.render_ctx = .{
-            .rows = rows,
-            .cols = cols,
+            .term_rows = rows,
+            .term_cols = cols,
+            .nc_ctx = nc_ctx,
         };
     }
     self.future = try std.Io.concurrent(io, coreLoop, .{ self, io, nc_ctx });
@@ -105,7 +106,7 @@ fn coreLoop(self: *Self, io: std.Io, nc_ctx: *c.notcurses) anyerror!void {
 
 fn handleInputEvent(self: *Self, nc_ctx: *c.notcurses, evt: InputEvent) !void {
     if (evt.key == c.NCKEY_RESIZE) {
-        if (c.notcurses_refresh(nc_ctx, &self.render_ctx.rows, &self.render_ctx.cols) < 0) {
+        if (c.notcurses_refresh(nc_ctx, &self.render_ctx.term_rows, &self.render_ctx.term_cols) < 0) {
             return error.RefreshFailed;
         }
     }
@@ -157,7 +158,7 @@ fn tick(self: *Self, frame_time: FrameTime) !void {
 fn render(self: *const Self, nc_ctx: *c.notcurses) !void {
     var needs_to_call_render = false;
     for (self.components.items) |*comp| {
-        needs_to_call_render = (try comp.render(&self.render_ctx, nc_ctx)) or needs_to_call_render;
+        needs_to_call_render = (try comp.render(&self.render_ctx)) or needs_to_call_render;
     }
 
     if (needs_to_call_render) {
@@ -190,10 +191,9 @@ test "handleInputEvent mounts and dismounts components" {
             return .Noop;
         }
 
-        fn renderFn(ptr: *anyopaque, render_ctx: *const RenderCtx, nc_ctx: *c.notcurses) anyerror!void {
+        fn renderFn(ptr: *anyopaque, render_ctx: *const RenderCtx) anyerror!void {
             _ = ptr;
             _ = render_ctx;
-            _ = nc_ctx;
         }
 
         fn keyHandler(ptr: *anyopaque, evt: InputEvent) anyerror!Conclusion {

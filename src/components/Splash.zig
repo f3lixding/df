@@ -34,9 +34,9 @@ pub fn initInterface(self: *Self) Component {
         .ptr = self,
         .vtable = &.{
             .render = struct {
-                pub fn _render(ptr: *anyopaque, render_ctx: *const RenderCtx, nc_ctx: *c.notcurses) !void {
+                pub fn _render(ptr: *anyopaque, render_ctx: *const RenderCtx) !void {
                     const self_typed: *Self = @ptrCast(@alignCast(ptr));
-                    try @call(.always_inline, render, .{ self_typed, render_ctx, nc_ctx });
+                    try @call(.always_inline, render, .{ self_typed, render_ctx });
                 }
             }._render,
 
@@ -250,12 +250,15 @@ pub fn handleInputEvent(self: *Self, input_event: InputEvent) !Conclusion {
     return .Noop;
 }
 
-pub fn render(self: *Self, render_ctx: *const RenderCtx, nc_ctx: *c.notcurses) !void {
+pub fn render(self: *Self, render_ctx: *const RenderCtx) !void {
+    const nc_ctx = render_ctx.nc_ctx;
+
     if (!self.initial_render_done) {
-        const rows = render_ctx.rows;
-        const cols = render_ctx.cols;
+        var rows: c_uint = 0;
+        var cols: c_uint = 0;
 
         const stdplane = c.notcurses_stdplane(nc_ctx) orelse return error.NoStdplane;
+        c.ncplane_dim_yx(stdplane, &rows, &cols);
 
         c.ncplane_erase(stdplane);
 

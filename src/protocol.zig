@@ -34,6 +34,7 @@ pub const Conclusion = union(enum) {
 };
 
 pub const RenderCtx = struct {
-    rows: c_uint = 0,
-    cols: c_uint = 0,
+    term_rows: c_uint = 0,
+    term_cols: c_uint = 0,
+    nc_ctx: *c.notcurses,
 };
